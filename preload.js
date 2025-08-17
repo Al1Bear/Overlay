@@ -1,18 +1,20 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
-// Expose safe IPC methods to the renderer
+// preload.js
 contextBridge.exposeInMainWorld('api', {
-  // Invoke primary OCR (capture + text)
+  // Invoke primary OCR (full text)
   ocr: (imageBuffer) => ipcRenderer.invoke('ocr', imageBuffer),
-  // Invoke secondary OCR (digits)
+  // Invoke secondary OCR (digits only)
   ocrDigits: (imageBuffer) => ipcRenderer.invoke('ocr-digits', imageBuffer),
+  // Capture screen image
   grab: () => ipcRenderer.invoke('grab'),
-  // Listen for OCR results (from global shortcut or other asynchronous triggers)
+  // Listener for OCR results from main (e.g., global shortcut)
   onOcrResult: (callback) => {
     ipcRenderer.on('ocr-result', (event, data) => {
-      if (callback && typeof callback === 'function') {
+      if (typeof callback === 'function') {
         callback(data);
       }
     });
   }
 });
+

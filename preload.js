@@ -1,32 +1,42 @@
 // preload.js
-const { contextBridge, ipcRenderer, desktopCapturer, screen } = require('electron');
+const { contextBridge, ipcRenderer, desktopCapturer } = require('electron');
 
-// Capture the primary screen to a PNG (Uint8Array) from the renderer side.
-// This avoids the intermittent "blank/empty" thumbnails some Windows builds
-// return when desktopCapturer is called from the main process.
+// Robust renderer-side capture that avoids Electron's 'screen' module.
+// Reads size from window.screen + devicePixelRatio and retries with
+// smaller thumbnails on GPUs that reject large requests.
 async function captureScreen() {
-  const d = screen.getPrimaryDisplay();
-  const { width, height } = d.size;
-  const scale = d.scaleFactor || 1;
+  const dpr = Number(globalThis.devicePixelRatio || 1);
+  const scr = globalThis.screen || {};
+  const baseW = Math.max(1, Math.floor((scr.width  || 1280) * dpr));
+  const baseH = Math.max(1, Math.floor((scr.height || 720)  * dpr));
 
-  const sources = await desktopCapturer.getSources({
-    types: ['screen'],
-    thumbnailSize: {
-      width: Math.round(width * scale),
-      height: Math.round(height * scale)
-    }
-  });
+  async function tryGrab(w, h) {
+    const sources = await desktopCapturer.getSources({
+      types: ['screen'],
+      thumbnailSize: { width: w, height: h }
+    });
+    const target = sources[0];
+    if (!target) return null;
+    const img = target.thumbnail;
+    // Some GPUs return an empty nativeImage at large sizes
+    if (typeof img.isEmpty === 'function' && img.isEmpty()) return null;
 
-  const target = sources.find(s => s.display_id === String(d.id)) || sources[0];
-  if (!target) throw new Error('No screen sources returned by desktopCapturer');
+    const png = img.toPNG();
+    if (!png || !png.length) return null;
+    return new Uint8Array(png.buffer, png.byteOffset, png.byteLength);
+  }
 
-  const png = target.thumbnail.toPNG(); // Buffer
-  // return Uint8Array so the renderer can create a Blob/URL easily
-  return new Uint8Array(png.buffer, png.byteOffset, png.byteLength);
+  // Try at full, then half, then a fixed fallback
+  let buf = await tryGrab(baseW, baseH);
+  if (!buf) buf = await tryGrab(Math.round(baseW / 2), Math.round(baseH / 2));
+  if (!buf) buf = await tryGrab(1600, 900); // last resort size
+
+  if (!buf) throw new Error('desktopCapturer returned an empty image');
+  return buf;
 }
 
 contextBridge.exposeInMainWorld('api', {
-  // screenshot -> PNG buffer
+  // screenshot -> PNG buffer (Uint8Array)
   grab: () => captureScreen(),
 
   // OCR passes (return strings)

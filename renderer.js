@@ -177,13 +177,15 @@ async function finalizeSelection() {
 btnCapture.addEventListener('click', async () => {
   try {
     setStatus('Capturing…');
-    const buf = await window.api.grab(); // full screen PNG
+    if (!window.api?.grab) throw new Error('grab() not available from preload');
+    const buf = await window.api.grab();
     showShot(buf);
   } catch (e) {
     console.error(e);
     setStatus('Capture failed');
   }
 });
+
 btnReset.addEventListener('click', () => {
   clearSelection();
   shotWrap.style.display = 'none';

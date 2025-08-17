@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline';" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <title>Gear OCR Overlay</title>
+  <style>
+    body { min-width: 600px; font-family: Arial, sans-serif; padding: 10px; }
+    #item-info { font-weight: bold; margin-bottom: 8px; }
+    #main-stat { margin-bottom: 8px; }
+    #sub-stats-label { font-weight: bold; }
+    #sub-stats-list { margin-top: 0; margin-bottom: 8px; padding-left: 20px; }
+    #sub-stats-list li { list-style-type: disc; }
+    #capture-btn { padding: 6px 12px; font-size: 14px; }
+  </style>
+</head>
+<body>
+  <div id="output">
+    <div id="item-info"></div>
+    <div id="main-stat"></div>
+    <div id="sub-stats-label"></div>
+    <ul id="sub-stats-list"></ul>
+  </div>
+  <button id="capture-btn">Capture</button>
+
+  <script src="./renderer.js"></script>
+</body>
+</html>

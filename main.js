@@ -1,262 +1,156 @@
-const { app, BrowserWindow, ipcMain, globalShortcut, desktopCapturer, screen } = require('electron');
+// main.js (Tesseract-only build; pointer-safe capture + split pre-processing)
+const { app, BrowserWindow, ipcMain, desktopCapturer, screen } = require('electron');
 const path = require('path');
-const fs = require('fs');
+const fs   = require('fs');
 const sharp = require('sharp');
+const Tesseract = require('tesseract.js');
 
-let hasWinOCR = false;
-let OcrEngine, BitmapDecoder, SoftwareBitmap, StorageFile, Streams, Language;
-try {
-    // Attempt to load Windows OCR and related imaging modules
-    ({ OcrEngine } = require('@nodert-win10/windows.media.ocr'));        // Windows.Media.Ocr
-    ({ BitmapDecoder, SoftwareBitmap } = require('@nodert-win10/windows.graphics.imaging'));
-    ({ StorageFile, FileAccessMode } = require('@nodert-win10/windows.storage'));
-    ({ InMemoryRandomAccessStream, DataWriter } = require('@nodert-win10/windows.storage.streams'));
-    ({ Language } = require('@nodert-win10/windows.globalization'));
-    hasWinOCR = true;
-    console.log('Windows OCR modules loaded.');
-} catch (error) {
-    console.log('Windows OCR not available, using Tesseract fallback.');
-    hasWinOCR = false;
-}
-
-// --- BEGIN: Ensure Tesseract.exe is on PATH (Windows) ---
-const candidateTesseractDirs = [
-  'C:\\\\Program Files\\\\Tesseract-OCR',
-  'C:\\\\Program Files (x86)\\\\Tesseract-OCR',
-  // common user-local install from UB Mannheim build:
-  path.join(process.env.USERPROFILE || '', 'AppData', 'Local', 'Tesseract-OCR')
-];
-
-function ensureTesseractOnPath() {
-  if (process.platform !== 'win32') return;
-  for (const dir of candidateTesseractDirs) {
-    if (dir && fs.existsSync(path.join(dir, 'tesseract.exe'))) {
-      // Prepend so it wins over any stale PATH entries
-      process.env.PATH = `${dir};${process.env.PATH || ''}`;
-      // Help tesseract find tessdata if needed
-      if (!process.env.TESSDATA_PREFIX) process.env.TESSDATA_PREFIX = dir;
-      console.log('[OCR] Added to PATH:', dir);
-      return;
-    }
-  }
-  console.warn('[OCR] Could not find tesseract.exe in common locations. Add its folder to PATH.');
-}
-ensureTesseractOnPath();
-// --- END: Ensure Tesseract.exe is on PATH (Windows) ---
-let tesseract;
-// OCR engine support (Tesseract and Windows OCR)
-let tesseractConfig, tesseractDigitsConfig;
-try {
-  // Try to require Tesseract OCR module
-  tesseract = require('node-tesseract-ocr');
-  // Default OCR config for Tesseract (general text)
-const tesseractConfig = {
-  lang: 'eng',
-  oem: 1,
-  psm: 6
-};
-  // Digits-only OCR config for Tesseract (numbers and symbols only)
-const tesseractDigitsConfig = {
-  lang: 'eng',
-  oem: 1,
-  psm: 6,
-  tessedit_char_whitelist: '0123456789.+%'
-};
-} catch (e) {
-  console.error('Tesseract OCR module not available:', e);
-}
-// Utility: perform OCR on an image using available engines
-async function runOcrEngine(imagePath, digitsOnly = false) {
-  let textResult = '';
-  // If doing general text OCR (labels + numbers)
-  if (!digitsOnly) {
-    if (hasWinOCR) {
-      try {
-        // Use Windows built-in OCR for primary text (label) recognition
-        const file = await StorageFile.getFileFromPathAsync(imagePath);
-        const stream = await file.openAsync(FileAccessMode.read);
-        const decoder = await BitmapDecoder.createAsync(stream);
-        const bitmap = await decoder.getSoftwareBitmapAsync();
-        const engine = OcrEngine.tryCreateFromLanguage(new Language('en'));
-        const result = await engine.recognizeAsync(bitmap);
-        textResult = result && result.text ? result.text : '';
-      } catch (err) {
-        console.error('Windows OCR failed, falling back to Tesseract:', err);
-        textResult = '';
-      }
-    }
-    if (!textResult && tesseract) {
-      // Use Tesseract OCR as fallback (or primary if Windows OCR not used)
-      try {
-        textResult = await tesseract.recognize(imagePath, tesseractConfig);
-      } catch (e) {
-        console.error('Tesseract primary OCR error:', e);
-      }
-    }
-  } else {
-    // Digits-only OCR pass (for numeric values)
-    if (tesseract) {
-      try {
-        textResult = await tesseract.recognize(imagePath, tesseractDigitsConfig);
-      } catch (e) {
-        console.error('Tesseract digits OCR error:', e);
-      }
-    } else {
-      // No Tesseract available for digits pass
-      console.warn('No Tesseract available for digits OCR pass');
-      textResult = '';
-    }
-  }
-  return textResult || '';
-}
-
-// Utility: capture screenshot of gear stats region and save to file
-async function captureScreenshot() {
-  // Use screenshot-desktop to capture the screen (or specific display if needed)
-  let screenshot;
-  try {
-    screenshot = require('screenshot-desktop');
-  } catch (e) {
-    console.error('Screenshot module not found:', e);
-    return null;
-  }
-  const outputPath = path.join(process.cwd(), 'last-crop.png');
-  try {
-    const result = await screenshot({ filename: outputPath, format: 'png' });
-    // result may be the image path or an array of paths (for multiple displays)
-    if (Array.isArray(result)) {
-      return result[0];  // use the first screen's image path
-    } else if (typeof result === 'string') {
-      return result;     // image path
-    } else {
-      // If no explicit path returned, assume saved to outputPath
-      return outputPath;
-    }
-  } catch (err) {
-    console.error('Screen capture failed:', err);
-    return null;
-  }
-}
-ipcMain.handle('grab', async () => {
-  const d = screen.getPrimaryDisplay();
-  const { width, height } = d.size;
-  const sf = d.scaleFactor || 1;
-  const sources = await desktopCapturer.getSources({
-    types: ['screen'],
-    thumbnailSize: { width: Math.round(width * sf), height: Math.round(height * sf) }
-  });
-  return sources[0].thumbnail.toPNG();  // Returns a PNG buffer of the primary screen
-});
-
-// IPC handler: Primary OCR (capture and recognize text)
-ipcMain.handle('ocr', async (event, imageBuffer) => {
-    // Preprocess the image buffer using Sharp (e.g. convert to grayscale and PNG)
-    const inputBuffer = Buffer.from(imageBuffer);  // ensure Node Buffer from Uint8Array
-    const processedImage = await sharp(inputBuffer)
-        .png()            // convert to PNG format (Sharp ensures image is decodable)
-        .toBuffer();      // get the processed image data as Buffer
-let text = '';
-    if (hasWinOCR) {
-        try {
-            // Use Windows 10 OCR if available
-            const engine = OcrEngine.tryCreateFromLanguage(new Language('en'));
-            // Convert image Buffer to WinRT SoftwareBitmap
-            const memStream = new InMemoryRandomAccessStream();
-            const writer = new Streams.DataWriter(memStream);
-            if (processedImage && processedImage.length > 0) {
-                writer.writeBytes(new Uint8Array(processedImage));
-                await writer.storeAsync();
-            } else {
-                throw new Error('Empty image buffer – cannot write to OCR stream');
-            }
-            const decoder = await BitmapDecoder.createAsync(memStream);
-            const softwareBitmap = await decoder.getSoftwareBitmapAsync();
-            const ocrResult = await engine.recognizeAsync(softwareBitmap);
-            text = ocrResult.text;
-        } catch (winErr) {
-            console.warn('Windows OCR failed, falling back to Tesseract:', winErr);
-            // Fallback to Tesseract OCR if any error occurs
-            text = await tesseract.recognize(processedImage, { lang: 'eng' });
-        }
-    } else {
-        // If Windows OCR not available, use Tesseract directly
-        text = await tesseract.recognize(processedImage, tesseractConfig);
-    }
-    return text;
-});
-
-// IPC handler: Secondary OCR (digits only)
-ipcMain.handle('ocr-digits', async (event, imageBuffer) => {
-    // Preprocess the image buffer (same as in 'ocr')
-    const inputBuffer = Buffer.from(imageBuffer);
-    const processedImage = await sharp(inputBuffer).png().toBuffer();
-    // Perform OCR using Tesseract with a whitelist for digits and common symbols
-    const text = await tesseract.recognize(processedImage, tesseractDigitsConfig);
-    return text;
-});
-
-// Create the main application window
 let mainWindow;
+
 function createWindow() {
   mainWindow = new BrowserWindow({
-    width: 800,
-    height: 600,
-    minWidth: 600,       // Ensure minimum 600px width
+    width: 1100,
+    height: 700,
+    minWidth: 800,
+    minHeight: 600,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
       nodeIntegration: false
-    },
-    alwaysOnTop: true,   // Keep overlay on top (if desired for overlay use-case)
-    frame: true          // You can set to false if a frameless overlay is preferred
+    }
   });
   mainWindow.loadFile('index.html');
+  mainWindow.on('closed', () => (mainWindow = null));
+}
+app.whenReady().then(createWindow);
+app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
+app.on('activate', () => { if (mainWindow === null) createWindow(); });
+
+// ---------- Utils ----------
+function ensureDir(p) { if (!fs.existsSync(p)) fs.mkdirSync(p, { recursive: true }); }
+
+// Auto‑invert (dark UI → light background), upscale small crops,
+// split pipelines for labels vs digits.
+async function preprocess(buf, mode = 'labels') {
+  // Get stats first (mean brightness) & width for upscale
+  const stats = await sharp(buf).stats();
+  const meta  = await sharp(buf).metadata();
+  const w     = meta.width || 0;
+  const mean  = (stats.channels[0].mean + stats.channels[1].mean + stats.channels[2].mean) / 3;
+  const lightOnDark = mean < 128; // typical game UIs are dark → invert helps Tesseract
+
+  let img = sharp(buf).png();
+
+  // Upscale small selections to give Tesseract more pixels
+  if (w && w < 1200) {
+    const target = Math.min(1800, Math.round(w * 2.2));
+    img = img.resize({ width: target, withoutEnlargement: false });
+  }
+
+  // Common base
+  img = img.grayscale().normalize();
+  if (lightOnDark) img = img.negate(); // black text on white background
+
+  if (mode === 'labels') {
+    // Preserve glyph shapes: no hard threshold; mild gamma + sharpen
+    img = img.gamma(1.1).sharpen({ sigma: 1.1 });
+  } else {
+    // Digits benefit from clean binarization
+    img = img.threshold(185);
+  }
+  return await img.toBuffer();
+}
+// Run recognize with a given PSM and return text + a quality signal
+async function recognizeWithPSM(imgBuf, psm) {
+  const { data } = await Tesseract.recognize(imgBuf, 'eng', {
+    logger: () => {},
+    tessedit_pageseg_mode: psm,
+    preserve_interword_spaces: 1,
+    user_defined_dpi: '300'
+  });
+  return {
+    text: data.text || '',
+    conf: typeof data.confidence === 'number' ? data.confidence : 0,
+    words: Array.isArray(data.words) ? data.words.length : 0
+  };
 }
 
-// Handle app lifecycle events
-app.whenReady().then(() => {
-  createWindow();
-  // Global hotkey for capture (e.g. F8)
-  globalShortcut.register('F8', async () => {
-    try {
-      const imagePath = await captureScreenshot();
-      if (!imagePath) return;
-      const text = await runOcrEngine(imagePath, false);
-      const digitsText = await runOcrEngine(imagePath, true);
-      // Save debug files
-      try {
-        fs.writeFileSync('last-ocr.txt', text, 'utf-8');
-        fs.writeFileSync('last-ocr-digits.txt', digitsText, 'utf-8');
-      } catch (e) {
-        console.error('Error saving debug files in global capture:', e);
-      }
-      // Send OCR results to renderer for parsing and display
-      if (mainWindow && text) {
-        mainWindow.webContents.send('ocr-result', { text: text, digitsText: digitsText });
-      } else if (mainWindow) {
-        // If no text detected, still notify (could be used to hide overlay)
-        mainWindow.webContents.send('ocr-result', { text: '', digitsText: '' });
-      }
-    } catch (err) {
-      console.error('Global capture OCR failed:', err);
-    }
+// Try PSM 4/6/3 and pick the result with highest confidence,
+// then words count, then text length.
+async function ocrLabels(imgBuf) {
+  const results = await Promise.all([4, 6, 3].map(psm => recognizeWithPSM(imgBuf, psm)));
+  results.sort((a, b) =>
+    (b.conf - a.conf) || (b.words - a.words) || (b.text.length - a.text.length)
+  );
+  return results[0].text;
+}
+
+// ---------- IPC: Screenshot ----------
+ipcMain.handle('grab', async () => {
+  const d = screen.getPrimaryDisplay();
+  const { width, height } = d.size;
+  const scale = d.scaleFactor || 1;
+
+  const sources = await desktopCapturer.getSources({
+    types: ['screen'],
+    thumbnailSize: { width: Math.round(width * scale), height: Math.round(height * scale) }
   });
-  
-  app.on('activate', () => {
-    if (BrowserWindow.getAllWindows().length === 0) {
-      createWindow();
-    }
-  });
+
+  const target = sources.find(s => s.display_id === String(d.id)) || sources[0];
+  if (!target) throw new Error('No screen sources returned by desktopCapturer');
+  return target.thumbnail.toPNG(); // Uint8Array
 });
 
-// Unregister global shortcuts on exit
-app.on('will-quit', () => {
-  globalShortcut.unregisterAll();
-});
+// ---------- IPC: OCR (labels) ----------
+ipcMain.handle('ocr', async (_evt, u8) => {
+  try {
+    ensureDir(path.join(__dirname, 'captures'));
+    fs.writeFileSync(path.join(__dirname, 'captures', 'last-crop.png'), Buffer.from(u8));
 
-// Quit the app when all windows are closed (except on macOS, per convention)
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    app.quit();
+    const pre  = await preprocess(Buffer.from(u8), 'labels');
+    const text = await ocrLabels(pre); // best-of-three (PSM 4/6/3)
+
+    fs.writeFileSync(path.join(__dirname, 'captures', 'last-ocr.txt'), text, 'utf8');
+    return text;
+  } catch (e) {
+    console.error('[OCR] error:', e);
+    return '';
   }
+});
+
+// ---------- IPC: OCR (digits-only) ----------
+ipcMain.handle('ocr-digits', async (_evt, u8) => {
+  try {
+    const pre = await preprocess(Buffer.from(u8), 'digits');
+    const { data } = await Tesseract.recognize(pre, 'eng', {
+      logger: () => {},
+      tessedit_pageseg_mode: 6,
+      tessedit_char_whitelist: '0123456789.+%:/',
+      preserve_interword_spaces: 1,
+      user_defined_dpi: '300'
+    });
+    const text = data.text || '';
+    fs.writeFileSync(path.join(__dirname, 'captures', 'last-ocr-digits.txt'), text, 'utf8');
+    return text;
+  } catch (e) {
+    console.error('[OCR-digits] error:', e);
+    return '';
+  }
+});
+
+// ---------- IPC: optional debug saves ----------
+ipcMain.handle('save-debug', async (_evt, txt) => {
+  try { ensureDir(path.join(__dirname, 'captures'));
+        fs.writeFileSync(path.join(__dirname, 'captures', 'last-ocr.txt'), String(txt || ''), 'utf8'); return true; }
+  catch { return false; }
+});
+ipcMain.handle('save-debug-digits', async (_evt, txt) => {
+  try { ensureDir(path.join(__dirname, 'captures'));
+        fs.writeFileSync(path.join(__dirname, 'captures', 'last-ocr-digits.txt'), String(txt || ''), 'utf8'); return true; }
+  catch { return false; }
+});
+ipcMain.handle('save-crop', async (_evt, u8) => {
+  try { ensureDir(path.join(__dirname, 'captures'));
+        fs.writeFileSync(path.join(__dirname, 'captures', 'last-crop.png'), Buffer.from(u8)); return true; }
+  catch { return false; }
 });

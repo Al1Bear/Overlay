@@ -2,6 +2,23 @@ const { app, BrowserWindow, ipcMain, globalShortcut, desktopCapturer, screen } =
 const path = require('path');
 const fs = require('fs');
 const sharp = require('sharp');
+
+let hasWinOCR = false;
+let OcrEngine, BitmapDecoder, SoftwareBitmap, StorageFile, Streams, Language;
+try {
+    // Attempt to load Windows OCR and related imaging modules
+    ({ OcrEngine } = require('@nodert-win10/windows.media.ocr'));        // Windows.Media.Ocr
+    ({ BitmapDecoder, SoftwareBitmap } = require('@nodert-win10/windows.graphics.imaging'));
+    ({ StorageFile, FileAccessMode } = require('@nodert-win10/windows.storage'));
+    ({ InMemoryRandomAccessStream, DataWriter } = require('@nodert-win10/windows.storage.streams'));
+    ({ Language } = require('@nodert-win10/windows.globalization'));
+    hasWinOCR = true;
+    console.log('Windows OCR modules loaded.');
+} catch (error) {
+    console.log('Windows OCR not available, using Tesseract fallback.');
+    hasWinOCR = false;
+}
+
 // --- BEGIN: Ensure Tesseract.exe is on PATH (Windows) ---
 const candidateTesseractDirs = [
   'C:\\\\Program Files\\\\Tesseract-OCR',
@@ -48,24 +65,6 @@ const tesseractDigitsConfig = {
 } catch (e) {
   console.error('Tesseract OCR module not available:', e);
 }
-
-// At the top of main.js (e.g. after other requires, around line 10-15):
-let hasWinOCR = false;
-let OcrEngine, BitmapDecoder, SoftwareBitmap, StorageFile, Streams, Language;
-try {
-    // Attempt to load Windows OCR and related imaging modules
-    ({ OcrEngine } = require('@nodert-win10/windows.media.ocr'));        // Windows.Media.Ocr namespace
-    ({ BitmapDecoder, SoftwareBitmap } = require('@nodert-win10/windows.graphics.imaging'));
-	({ StorageFile, FileAccessMode } = require('@nodert-win10/windows.storage'));
-    ({ InMemoryRandomAccessStream, DataWriter } = require('@nodert-win10/windows.storage.streams'));
-    ({ Language } = require('@nodert-win10/windows.globalization'));
-    hasWinOCR = true;
-    console.log('Windows OCR modules loaded.');
-} catch (error) {
-    console.log('Windows OCR not available, using Tesseract fallback.');
-    hasWinOCR = false;
-}
-
 // Utility: perform OCR on an image using available engines
 async function runOcrEngine(imagePath, digitsOnly = false) {
   let textResult = '';
@@ -157,54 +156,43 @@ ipcMain.handle('ocr', async (event, imageBuffer) => {
         .png()            // convert to PNG format (Sharp ensures image is decodable)
         .toBuffer();      // get the processed image data as Buffer
 let text = '';
-if (hasWinOCR) {
-  try {
-    const inputBuf = Buffer.from(imageBuffer);
-    const processedImage = await sharp(inputBuf).png().toBuffer();
-
-    if (!processedImage || processedImage.length === 0) {
-      throw new Error('Empty image buffer for WinRT OCR.');
+    if (hasWinOCR) {
+        try {
+            // Use Windows 10 OCR if available
+            const engine = OcrEngine.tryCreateFromLanguage(new Language('en'));
+            // Convert image Buffer to WinRT SoftwareBitmap
+            const memStream = new InMemoryRandomAccessStream();
+            const writer = new Streams.DataWriter(memStream);
+            if (processedImage && processedImage.length > 0) {
+                writer.writeBytes(new Uint8Array(processedImage));
+                await writer.storeAsync();
+            } else {
+                throw new Error('Empty image buffer – cannot write to OCR stream');
+            }
+            const decoder = await BitmapDecoder.createAsync(memStream);
+            const softwareBitmap = await decoder.getSoftwareBitmapAsync();
+            const ocrResult = await engine.recognizeAsync(softwareBitmap);
+            text = ocrResult.text;
+        } catch (winErr) {
+            console.warn('Windows OCR failed, falling back to Tesseract:', winErr);
+            // Fallback to Tesseract OCR if any error occurs
+            text = await tesseract.recognize(processedImage, { lang: 'eng' });
+        }
+    } else {
+        // If Windows OCR not available, use Tesseract directly
+        text = await tesseract.recognize(processedImage, tesseractConfig);
     }
-
-    // WinRT stream write (guarded & flushed)
-    const memStream = new InMemoryRandomAccessStream();
-    const writer = new DataWriter(memStream);
-    writer.writeBytes(Uint8Array.from(processedImage)); // ensure a typed array
-    await writer.storeAsync();
-    writer.close();
-    memStream.seek(0);
-
-    const decoder = await BitmapDecoder.createAsync(memStream);
-    const softwareBitmap = await decoder.getSoftwareBitmapAsync();
-
-    const engine = OcrEngine.tryCreateFromUserProfileLanguages();
-    if (!engine) throw new Error('WinRT OcrEngine not created');
-
-    const ocrResult = await engine.recognizeAsync(softwareBitmap);
-    text = (ocrResult && ocrResult.text) || '';
-  } catch (e) {
-    console.error('[OCR] Windows OCR failed:', e);
-    text = ''; // force fallback below
-  }
-}
-
-if (!text) {
-  // Fallback: Tesseract CLI via node-tesseract-ocr (now that PATH is fixed)
-  const inputBuf = Buffer.from(imageBuffer);
-  const processedImage = await sharp(inputBuf).png().toBuffer();
-  text = await tesseract.recognize(processedImage, tesseractConfig);
-}
-
-return text;
-
+    return text;
 });
 
-// IPC handler: Secondary OCR (digits only, reuse last captured image)
-ipcMain.handle('ocr-digits', async (_evt, imageBuffer) => {
-  const inputBuf = Buffer.from(imageBuffer);
-  const processedImage = await sharp(inputBuf).png().toBuffer();
-  const text = await tesseract.recognize(processedImage, tesseractDigitsConfig);
-  return text;
+// IPC handler: Secondary OCR (digits only)
+ipcMain.handle('ocr-digits', async (event, imageBuffer) => {
+    // Preprocess the image buffer (same as in 'ocr')
+    const inputBuffer = Buffer.from(imageBuffer);
+    const processedImage = await sharp(inputBuffer).png().toBuffer();
+    // Perform OCR using Tesseract with a whitelist for digits and common symbols
+    const text = await tesseract.recognize(processedImage, tesseractDigitsConfig);
+    return text;
 });
 
 // Create the main application window

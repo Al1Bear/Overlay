@@ -2,6 +2,30 @@ const { app, BrowserWindow, ipcMain, globalShortcut, desktopCapturer, screen } =
 const path = require('path');
 const fs = require('fs');
 const sharp = require('sharp');
+// --- BEGIN: Ensure Tesseract.exe is on PATH (Windows) ---
+const candidateTesseractDirs = [
+  'C:\\\\Program Files\\\\Tesseract-OCR',
+  'C:\\\\Program Files (x86)\\\\Tesseract-OCR',
+  // common user-local install from UB Mannheim build:
+  path.join(process.env.USERPROFILE || '', 'AppData', 'Local', 'Tesseract-OCR')
+];
+
+function ensureTesseractOnPath() {
+  if (process.platform !== 'win32') return;
+  for (const dir of candidateTesseractDirs) {
+    if (dir && fs.existsSync(path.join(dir, 'tesseract.exe'))) {
+      // Prepend so it wins over any stale PATH entries
+      process.env.PATH = `${dir};${process.env.PATH || ''}`;
+      // Help tesseract find tessdata if needed
+      if (!process.env.TESSDATA_PREFIX) process.env.TESSDATA_PREFIX = dir;
+      console.log('[OCR] Added to PATH:', dir);
+      return;
+    }
+  }
+  console.warn('[OCR] Could not find tesseract.exe in common locations. Add its folder to PATH.');
+}
+ensureTesseractOnPath();
+// --- END: Ensure Tesseract.exe is on PATH (Windows) ---
 let tesseract;
 // OCR engine support (Tesseract and Windows OCR)
 let tesseractConfig, tesseractDigitsConfig;
@@ -9,19 +33,18 @@ try {
   // Try to require Tesseract OCR module
   tesseract = require('node-tesseract-ocr');
   // Default OCR config for Tesseract (general text)
- tesseractConfig = {
-   lang: 'eng', oem: 1, psm: 6,
-   execPath: 'C:\\Program Files\\Tesseract-OCR\\tesseract.exe'
- };
+const tesseractConfig = {
+  lang: 'eng',
+  oem: 1,
+  psm: 6
+};
   // Digits-only OCR config for Tesseract (numbers and symbols only)
- tesseractDigitsConfig = {
-   lang: 'eng', oem: 1, psm: 6,
-   tessedit_char_whitelist: '0123456789.+%',
-   execPath: 'C:\\Program Files\\Tesseract-OCR\\tesseract.exe'
- };
-if (!fs.existsSync(tesseractConfig.execPath)) {
-  console.warn(`Tesseract binary not found at path: ${tesseractConfig.execPath}`);
-}
+const tesseractDigitsConfig = {
+  lang: 'eng',
+  oem: 1,
+  psm: 6,
+  tessedit_char_whitelist: '0123456789.+%'
+};
 } catch (e) {
   console.error('Tesseract OCR module not available:', e);
 }
@@ -133,47 +156,53 @@ ipcMain.handle('ocr', async (event, imageBuffer) => {
     const processedImage = await sharp(inputBuffer)
         .png()            // convert to PNG format (Sharp ensures image is decodable)
         .toBuffer();      // get the processed image data as Buffer
+let text = '';
+if (hasWinOCR) {
+  try {
+    const inputBuf = Buffer.from(imageBuffer);
+    const processedImage = await sharp(inputBuf).png().toBuffer();
 
-    let text = '';
-    if (hasWinOCR) {
-        try {
-            // Use Windows 10 OCR if available
-            const engine = OcrEngine.tryCreateFromLanguage(new Language('en'));
-            // Convert the processed image Buffer to a WinRT SoftwareBitmap for OCR
-const memStream = new InMemoryRandomAccessStream();
-const writer = new Streams.DataWriter(memStream);
-if (processedImage && processedImage.length > 0) {
-  writer.writeBytes(new Uint8Array(processedImage));
-  await writer.storeAsync();
-  writer.close();
-  memStream.seek(0);
-} else {
-  throw new Error('Empty image buffer – cannot write to OCR stream');
+    if (!processedImage || processedImage.length === 0) {
+      throw new Error('Empty image buffer for WinRT OCR.');
+    }
+
+    // WinRT stream write (guarded & flushed)
+    const memStream = new InMemoryRandomAccessStream();
+    const writer = new DataWriter(memStream);
+    writer.writeBytes(Uint8Array.from(processedImage)); // ensure a typed array
+    await writer.storeAsync();
+    writer.close();
+    memStream.seek(0);
+
+    const decoder = await BitmapDecoder.createAsync(memStream);
+    const softwareBitmap = await decoder.getSoftwareBitmapAsync();
+
+    const engine = OcrEngine.tryCreateFromUserProfileLanguages();
+    if (!engine) throw new Error('WinRT OcrEngine not created');
+
+    const ocrResult = await engine.recognizeAsync(softwareBitmap);
+    text = (ocrResult && ocrResult.text) || '';
+  } catch (e) {
+    console.error('[OCR] Windows OCR failed:', e);
+    text = ''; // force fallback below
+  }
 }
-const decoder = await BitmapDecoder.createAsync(memStream);
-            const softwareBitmap = await decoder.getSoftwareBitmapAsync(); 
-            const ocrResult = await engine.recognizeAsync(softwareBitmap);
-            text = ocrResult.text;
-} catch (winErr) {
-  console.error('Windows OCR failed:', winErr);
-  // Fallback to Tesseract using configured options
+
+if (!text) {
+  // Fallback: Tesseract CLI via node-tesseract-ocr (now that PATH is fixed)
+  const inputBuf = Buffer.from(imageBuffer);
+  const processedImage = await sharp(inputBuf).png().toBuffer();
   text = await tesseract.recognize(processedImage, tesseractConfig);
 }
-    } else {
-        // If Windows OCR not available, use Tesseract directly
-        text = await tesseract.recognize(processedImage, tesseractConfig);
-    }
-    return text;
+
+return text;
+
 });
 
 // IPC handler: Secondary OCR (digits only, reuse last captured image)
-ipcMain.handle('ocr-digits', async (event, imageBuffer) => {
-    // Preprocess the image buffer using Sharp (same steps as in 'ocr')
-    const inputBuffer = Buffer.from(imageBuffer);
-    const processedImage = await sharp(inputBuffer)
-        .png()
-        .toBuffer();
-    // Perform OCR using Tesseract with a whitelist for digits and common symbols
+ipcMain.handle('ocr-digits', async (_evt, imageBuffer) => {
+  const inputBuf = Buffer.from(imageBuffer);
+  const processedImage = await sharp(inputBuf).png().toBuffer();
   const text = await tesseract.recognize(processedImage, tesseractDigitsConfig);
   return text;
 });

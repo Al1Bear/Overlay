@@ -121,6 +121,42 @@ ipcMain.handle('ocr-digits', async (_evt, u8) => {
     return '';
   }
 });
+// Fallback capture from main process (used when renderer-side capture isn't available)
+ipcMain.handle('grab-main', async () => {
+  try {
+    const d = screen.getPrimaryDisplay();
+    const scale = d && d.scaleFactor ? d.scaleFactor : 1;
+    const sizes = [];
+
+    if (d && d.size) {
+      sizes.push(
+        { w: Math.round(d.size.width * scale), h: Math.round(d.size.height * scale) },
+        { w: Math.round(d.size.width * scale / 2), h: Math.round(d.size.height * scale / 2) }
+      );
+    }
+    sizes.push({ w: 1600, h: 900 }, { w: 1280, h: 720 }); // generic fallbacks
+
+    for (const s of sizes) {
+      const sources = await desktopCapturer.getSources({
+        types: ['screen'],
+        thumbnailSize: { width: s.w, height: s.h }
+      });
+      if (!sources || !sources.length) continue;
+
+      const target = sources[0];
+      if (!target || !target.thumbnail) continue;
+      if (typeof target.thumbnail.isEmpty === 'function' && target.thumbnail.isEmpty()) continue;
+
+      const png = target.thumbnail.toPNG();
+      if (png && png.length) return png; // Buffer
+    }
+
+    throw new Error('No screen image from main desktopCapturer');
+  } catch (e) {
+    console.error('[grab-main] failed:', e);
+    throw e;
+  }
+});
 
 // ---------- IPC: optional debug saves ----------
 ipcMain.handle('save-debug', async (_evt, txt) => {

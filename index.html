@@ -1,28 +1,59 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline';" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <meta charset="utf-8" />
   <title>Gear OCR Overlay</title>
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; img-src 'self' blob: data:; script-src 'self'; style-src 'self' 'unsafe-inline'">
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
   <style>
-    body { min-width: 600px; font-family: Arial, sans-serif; padding: 10px; }
-    #item-info { font-weight: bold; margin-bottom: 8px; }
-    #main-stat { margin-bottom: 8px; }
-    #sub-stats-label { font-weight: bold; }
-    #sub-stats-list { margin-top: 0; margin-bottom: 8px; padding-left: 20px; }
-    #sub-stats-list li { list-style-type: disc; }
-    #capture-btn { padding: 6px 12px; font-size: 14px; }
+    :root { --pad: 12px; }
+    html, body { margin:0; padding:0; height:100%; font-family: system-ui, Segoe UI, Roboto, Arial, sans-serif; }
+    header { display:flex; align-items:center; gap:10px; padding:var(--pad); border-bottom:1px solid #eee; }
+    button { padding:8px 12px; font-size:14px; }
+    #status { font-size:12px; opacity:.75; margin-left:auto; }
+    main { display:grid; grid-template-columns: 1fr 1fr; gap:var(--pad); padding:var(--pad); height: calc(100% - 56px); }
+    @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
+
+    /* Left panel (screenshot & selection) */
+    #shotPanel { border:1px solid #eee; border-radius:8px; overflow:hidden; position:relative; min-height: 300px; }
+    #shotWrap  { position:relative; width:100%; height:100%; display:none; background:#111; cursor: crosshair; }
+    #shotImg   { display:block; max-width:100%; height:auto; user-select:none; -webkit-user-drag:none; }
+    #selectBox { position:absolute; border:2px dashed #2f7cff; background: rgba(47,124,255,.15); pointer-events:none; display:none; }
+    #hint      { position:absolute; top:8px; left:8px; color:#fff; background:rgba(0,0,0,.35); padding:4px 6px; border-radius:4px; font-size:12px; }
+    #sizeBadge { position:absolute; right:8px; top:8px; color:#fff; background:rgba(0,0,0,.4); padding:2px 6px; border-radius:4px; font-size:12px; display:none; }
+    #sizeBadge.tooSmall{ background:rgba(200,50,50,.75); }
+
+    /* Right panel (output) */
+    #outPanel { border:1px solid #eee; border-radius:8px; padding:var(--pad); overflow:auto; }
+    pre { white-space:pre-wrap; word-wrap:break-word; margin:0; }
+    .muted { opacity:.6; font-size:12px; margin-top:6px; }
   </style>
 </head>
 <body>
-  <div id="output">
-    <div id="item-info"></div>
-    <div id="main-stat"></div>
-    <div id="sub-stats-label"></div>
-    <ul id="sub-stats-list"></ul>
-  </div>
-  <button id="capture-btn">Capture</button>
+  <header>
+    <button id="btnCapture">Capture</button>
+    <button id="btnReset" title="Clear current screenshot">Reset</button>
+    <span id="status">Ready</span>
+  </header>
+
+  <main>
+    <section id="shotPanel">
+      <div id="shotWrap">
+        <div id="hint">Drag to select an area</div>
+        <div id="sizeBadge"></div>
+        <img id="shotImg" alt="screenshot" draggable="false"/>
+        <div id="selectBox"></div>
+      </div>
+      <div id="emptyShot" style="padding:16px;color:#777;">Click <b>Capture</b> to take a screenshot, then drag to select the gear panel.</div>
+    </section>
+
+    <section id="outPanel">
+      <h3>OCR Output</h3>
+      <pre id="output">(no output)</pre>
+      <div class="muted">Two-pass OCR: labels (full text) + digits (numbers with whitelist)</div>
+    </section>
+  </main>
 
   <script src="./renderer.js"></script>
 </body>

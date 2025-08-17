@@ -85,22 +85,6 @@ async function ocrLabels(imgBuf) {
   return results[0].text;
 }
 
-// ---------- IPC: Screenshot ----------
-ipcMain.handle('grab', async () => {
-  const d = screen.getPrimaryDisplay();
-  const { width, height } = d.size;
-  const scale = d.scaleFactor || 1;
-
-  const sources = await desktopCapturer.getSources({
-    types: ['screen'],
-    thumbnailSize: { width: Math.round(width * scale), height: Math.round(height * scale) }
-  });
-
-  const target = sources.find(s => s.display_id === String(d.id)) || sources[0];
-  if (!target) throw new Error('No screen sources returned by desktopCapturer');
-  return target.thumbnail.toPNG(); // Uint8Array
-});
-
 // ---------- IPC: OCR (labels) ----------
 ipcMain.handle('ocr', async (_evt, u8) => {
   try {

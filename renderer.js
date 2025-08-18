@@ -1,59 +1,62 @@
-// renderer.js (sidebar)
-const $ = s => document.querySelector(s);
+// renderer.js
+// Small HUD controller (no heavy parsing here)
 
-const btnEdit = $('#btnEdit');
-const btnAuto = $('#btnAuto');
-const btnSnap = $('#btnSnap');
-const btnBox  = $('#btnBox');
+const $ = (sel) => document.querySelector(sel);
+
+const btnEdit = $('#btn-edit');
+const btnAuto = $('#btn-auto');
+const btnSnap = $('#btn-snap');
+const btnBox  = $('#btn-box');
 const out     = $('#out');
-const statusEl= $('#status');
+const status  = $('#status');
 
-let isEditing = false;
-let autoOn = false;
-
-function setStatus(s){ statusEl.textContent = s || ''; }
-function showLines(lines){ if (lines && lines.length) out.textContent = lines.join('\n'); }
-
-// Edit toggle
-async function toggleEdit() {
-  isEditing = !isEditing;
-  await window.bridge.editRoi(isEditing);
-  btnEdit.textContent = isEditing ? 'Finish Edit' : 'Edit ROI';
-  setStatus(isEditing ? 'Editing (drag/resize in the green box)…' : 'Edit done.');
+function setStatus(text) {
+  status.textContent = text;
 }
 
-// Auto toggle
-async function toggleAuto() {
-  autoOn = !autoOn;
-  autoOn = await window.bridge.auto(autoOn);
-  btnAuto.textContent = autoOn ? 'Stop Auto' : 'Auto';
-  setStatus(autoOn ? 'Auto: watching digits…' : 'Auto: off');
+function appendLine(text) {
+  out.value += text + '\n';
+  out.scrollTop = out.scrollHeight;
 }
 
-// Snap now
-async function snapNow() {
-  setStatus('Capturing…');
-  const lines = await window.bridge.snap();
-  showLines(lines);
-  setStatus('Captured ✓');
+async function refreshRoiBadge() {
+  const s = await window.api.roi.get();
+  $('#roi-info').textContent = `ROI ${s.width}×${s.height} @ ${s.x},${s.y}  ${s.editing ? '(Editing)' : ''}`;
 }
 
-btnEdit.addEventListener('click', toggleEdit);
-btnAuto.addEventListener('click', toggleAuto);
-btnSnap.addEventListener('click', snapNow);
+btnEdit.addEventListener('click', async () => {
+  const on = await window.api.roi.edit();
+  setStatus(on ? 'ROI: editing (click-through OFF)' : 'ROI: locked (click-through ON)');
+  refreshRoiBadge();
+});
+
+btnAuto.addEventListener('click', async () => {
+  const on = await window.api.auto.toggle();
+  btnAuto.textContent = on ? 'Auto: ON' : 'Auto: OFF';
+  setStatus(on ? 'Auto capture enabled' : 'Auto capture disabled');
+});
+
+btnSnap.addEventListener('click', async () => {
+  setStatus('Snapping…');
+  const res = await window.api.snap();
+  setStatus('Snap done');
+  appendLine(`[SNAP] ${JSON.stringify(res.roi)}  png=${res.pngBase64.length}b64`);
+});
+
 btnBox.addEventListener('click', async () => {
-  const vis = await window.bridge.toggleBox();
-  setStatus(vis ? 'Box shown' : 'Box hidden');
+  const s = await window.api.roi.get();
+  appendLine(`[ROI] ${JSON.stringify(s)}`);
 });
 
-// Hotkey relays from main
-window.bridge.onEditToggle(() => toggleEdit());
-window.bridge.onSnap(() => snapNow());
-window.bridge.onAutoToggle(() => toggleAuto());
+window.api.roi.onBounds(refreshRoiBadge);
+window.api.roi.onEditing(refreshRoiBadge);
+window.api.roi.onVisible((v) => setStatus(`ROI overlay ${v ? 'shown' : 'hidden'}`));
 
-// Main → status/results
-window.bridge.onUpdate(({ lines, status }) => {
-  if (lines && lines.length) showLines(lines);
-  if (status) setStatus(status);
+window.api.auto.onCapture((data) => {
+  appendLine(`[AUTO] change detected -> ${data.pngBase64.length}b64`);
 });
-window.bridge.onStatus((s) => setStatus(s));
+
+window.addEventListener('DOMContentLoaded', async () => {
+  await refreshRoiBadge();
+  setStatus('Ready');
+});

@@ -197,6 +197,38 @@ function normalizeLabel(s) {
     .replace(/[^\w%()+]/g, ' ')
     .trim();
 }
+// Borrow label words from nearby groups on the same row (±14 px),
+// using only non-digit tokens that sit left of the first number.
+function collectLabelNear(allGroups, yCenter, xFirstNum) {
+  const V = 14; // vertical tolerance in px
+  const parts = [];
+  for (const G of allGroups) {
+    if (Math.abs(G.y - yCenter) > V) continue;
+    for (const w of G.words) {
+      const t = w.text || '';
+      if (/[0-9]/.test(t)) continue;
+      if (w.bbox.x1 <= xFirstNum + 6) parts.push(t);
+    }
+  }
+  return normalizeLabel(parts.join(' '));
+}
+
+// Short-form aliases to improve fuzzy mapping (after normalize)
+const LABEL_ALIASES = new Map([
+  ['hp', 'HP'], ['hp%', 'HP%'],
+  ['atk', 'Attack'], ['atk%', 'ATK%'],
+  ['def', 'Defense'], ['def%', 'DEF%'],
+  ['critrate', 'Crit Rate'], ['cr%','Crit Rate'], ['crit','Crit Rate'],
+  ['critdmg', 'Crit Damage'], ['critdamage','Crit Damage'], ['cd%','Crit Damage'],
+  ['acc', 'Accuracy'], ['res', 'Resistance'], ['resist','Resistance']
+]);
+
+function mapAliasOrBest(label) {
+  const k = (label || '').replace(/[\s_]+/g,'').replace(/[^A-Za-z%]/g,'').toLowerCase();
+  if (LABEL_ALIASES.has(k)) return LABEL_ALIASES.get(k);
+  return bestLabel(label);
+}
+
 
 function parseNumberToken(t) {
   if (!t) return null;
@@ -208,14 +240,103 @@ function parseNumberToken(t) {
     raw: cleaned,
     value: isNaN(num) ? null : num,
     unit: hasPct ? '%' : '',
-    conf: (t.confidence || 0) / 100
+    conf: ((t.confidence || 0) > 1 ? (t.confidence || 0) / 100 : (t.confidence || 0))
   };
 }
+// --- Label dictionary + fuzzy matching + value sanity ---
+
+// Canonical labels we expect on Dragonheir gear panels
+const LABEL_CANON = [
+  'HP', 'HP%', 'Attack', 'ATK%', 'Defense', 'DEF%',
+  'Crit Rate', 'Crit Damage', 'Accuracy', 'Resistance',
+  'Enlightenment'
+];
+
+// Normalize a label into a compact comparison key (letters + %)
+function normKey(s) {
+  return (s || '')
+    .replace(/[\s_]+/g, '')
+    .replace(/[^A-Za-z%]/g, '')
+    .toLowerCase();
+}
+
+// Pre-compute normalized keys for dictionary
+const LABEL_KEYS = LABEL_CANON.map(l => ({ canon: l, key: normKey(l) }));
+
+// Lightweight Levenshtein (for short strings)
+function lev(a, b) {
+  const m = a.length, n = b.length;
+  if (!m) return n; if (!n) return m;
+  const dp = new Array(n + 1);
+  for (let j = 0; j <= n; j++) dp[j] = j;
+  for (let i = 1; i <= m; i++) {
+    let prev = dp[0], cur;
+    dp[0] = i;
+    for (let j = 1; j <= n; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      cur = Math.min(
+        dp[j] + 1,         // deletion
+        dp[j - 1] + 1,     // insertion
+        prev + cost        // substitution
+      );
+      prev = dp[j]; dp[j] = cur;
+    }
+  }
+  return dp[n];
+}
+
+// Best canonical label for a noisy OCR label; returns null if no good match
+function bestLabel(ocrLabel) {
+  const key = normKey(ocrLabel);
+  if (!key) return null;
+
+  // exact or near-exact hits first
+  for (const { canon, key: k } of LABEL_KEYS) {
+    if (key === k) return canon;
+  }
+
+  // fuzzy: tolerate small OCR slips (e.g., "Obccuney" → "Accuracy")
+  let best = null, bestScore = 1e9;
+  for (const { canon, key: k } of LABEL_KEYS) {
+    const d = lev(key, k);
+    if (d < bestScore) { bestScore = d; best = canon; }
+  }
+  // accept only if the edit distance is small relative to length
+  const maxLen = Math.max(key.length, (best && normKey(best).length) || 1);
+  const ratio = bestScore / maxLen;  // 0 perfect .. 1 very bad
+  return ratio <= 0.34 ? best : null; // ~≤1/3 edits allowed
+}
+
+// Repair % values when OCR dropped the decimal (e.g., "7.8%" → "78%")
+function fixPercentValue(value, raw) {
+  if (value == null) return null;
+  let v = value;
+
+  // If absurdly high, scale down by 10 until ≤100
+  while (v > 100) v = v / 10;
+
+  // If ≥50 and raw has no '.', it's very likely one decimal lost (e.g., 78 -> 7.8)
+  if (v >= 50 && (typeof raw === 'string' && !raw.includes('.'))) {
+    // keep 40% as is (main stat), but repair 78 -> 7.8, 66 -> 6.6, 23 -> 23 (already fine)
+    if (v % 10 !== 0) v = v / 10;
+  }
+
+  // Clamp
+  if (v < 0) v = 0;
+  if (v > 100) v = 100;
+  return Math.round(v * 10) / 10;
+}
+
+// Identify labels we consider "main stat" candidates
+const MAIN_LABELS = new Set(['Crit Rate', 'Crit Damage', 'ATK%', 'HP%', 'DEF%', 'Enlightenment']);
 
 async function analyzeRoiSmart(native) {
   // 1) orient
   const { buf, orientation } = await toRotatedPNG(native);
   const oriented = nativeImage.createFromBuffer(buf);
+const { width: W, height: H } = oriented.getSize();
+// numeric values live on the right side; ignore digits to the left of this column
+const NUM_X0 = Math.floor(W * 0.50); // a touch wider to avoid over-filtering
 
   // 2) OCR once, then work from word boxes
   const { data } = await Tesseract.recognize(buf, 'eng', {});
@@ -225,20 +346,56 @@ async function analyzeRoiSmart(native) {
   for (const g of groups) {
     // only consider lines that actually contain numbers
     const words = g.words;
-    const numericRaw = words.filter(w => /[0-9]/.test(w.text));
+let numericRaw = words.filter(w => {
+  const t = w.text || '';
+  if (!/[0-9]/.test(t)) return false;
+
+  // Stay in the right-side value column
+  const xc = (w.bbox.x0 + w.bbox.x1) / 2;
+  if (xc < NUM_X0) return false;
+
+  // Normalize confidence (Tesseract can be 0–1 or 0–100)
+  const conf = (w.confidence ?? 0);
+  const confPct = conf > 1 ? conf : conf * 100;
+
+  // Basic size sanity to avoid tiny artifacts
+  const wpx = (w.bbox.x1 - w.bbox.x0);
+  const hpx = (w.bbox.y1 - w.bbox.y0);
+
+  return confPct >= 40 && wpx >= 5 && hpx >= 9;
+});
+
+// Fallback: if strict gating removed everything, accept any digit token in the right column
+if (!numericRaw.length) {
+  numericRaw = words.filter(w => /[0-9]/.test(w.text || '') &&
+    ((w.bbox.x0 + w.bbox.x1) / 2) >= NUM_X0);
+}
     if (!numericRaw.length) continue;
 
     const numeric = mergeAdjacentNumericTokens(numericRaw);
     const xFirstNum = Math.min(...numeric.map(n => n.bbox.x0));
 
-    // label = all words fully left of the first numeric token
-    const labelText = normalizeLabel(
-      words
-        .filter(w => w.bbox.x1 <= xFirstNum + 4 && !/[0-9]/.test(w.text))
-        .map(w => w.text)
-        .join(' ')
-    );
+// Restrict label grab to a narrow window immediately left of the first number
+const LABEL_X_SPAN = 240; // px window to the left of the numeric column
+const labelRaw = normalizeLabel(
+  words
+    .filter(w =>
+      w.bbox.x1 <= xFirstNum + 4 &&
+      w.bbox.x1 >= xFirstNum - LABEL_X_SPAN &&
+      !/[0-9]/.test(w.text)
+    )
+    .map(w => w.text)
+    .join(' ')
+);
 
+// If the current group is digits-only, borrow label from nearby groups on the same row
+const labelSource = labelRaw || collectLabelNear(groups, g.y, xFirstNum);
+
+// Canonicalize (keep Element tags verbatim), then alias/fuzzy-match
+let canonLabel = /element/i.test(labelSource) ? labelSource : mapAliasOrBest(labelSource);
+
+// If we still can't recognize the label, drop this noisy row
+if (!canonLabel) continue;
     // base vs upgrade (blue)
     let base = null, upgrade = null;
     if (numeric.length === 1) {
@@ -261,33 +418,54 @@ async function analyzeRoiSmart(native) {
         base = cand[1] || cand[0];
       }
     }
+const baseParsed = parseNumberToken(base);
+const upParsed   = parseNumberToken(upgrade);
 
-    const baseParsed = parseNumberToken(base);
-    const upParsed = parseNumberToken(upgrade);
+// Decide unit from whichever token has it
+let unit = (baseParsed && baseParsed.unit) ? baseParsed.unit : ((upParsed && upParsed.unit) ? upParsed.unit : '');
 
-    lines.push({
-      label: labelText,
-      base: baseParsed ? baseParsed.value : null,
-      upgrade: upParsed ? upParsed.value : 0,
-      unit: baseParsed && baseParsed.unit ? baseParsed.unit : (upParsed && upParsed.unit ? upParsed.unit : ''),
-      y: g.y,
-      confidence: Math.round(((baseParsed?.conf || 0) + (upParsed?.conf || 0)) / (upParsed ? 2 : 1) * 100) / 100
-    });
+// Repair percentages when OCR lost the dot
+let baseVal = baseParsed ? baseParsed.value : null;
+let upVal   = upParsed   ? upParsed.value   : 0;
+if (unit === '%') {
+  baseVal = fixPercentValue(baseVal, baseParsed ? baseParsed.raw : '');
+  upVal   = fixPercentValue(upVal,   upParsed   ? upParsed.raw   : '');
+}
+
+// Sanity: drop lines with nonsense values
+if (unit === '%' && (baseVal == null || baseVal > 100)) continue;
+if (unit === ''  && (baseVal == null || baseVal < 0))   continue;
+
+lines.push({
+  label: canonLabel,
+  base: baseVal,
+  upgrade: upVal || 0,
+  unit,
+  y: g.y,
+  confidence: Math.round(((baseParsed?.conf || 0) + (upParsed?.conf || 0)) / (upParsed ? 2 : 1) * 100) / 100
+});
   }
+// keep order top->bottom
+lines.sort((a, b) => a.y - b.y);
 
-  // keep order top->bottom
-  lines.sort((a, b) => a.y - b.y);
+// main stats: pick up to 2 lines that look like main labels
+const mains = [];
+for (const L of lines) {
+  if (MAIN_LABELS.has(L.label) || /\(.*Element\)$/i.test(L.label)) {
+    mains.push(L);
+    if (mains.length === 2) break;
+  }
+}
+// fallback if nothing matched
+const mainStats = mains.length ? mains : lines.slice(0, Math.min(2, lines.length));
+const substats  = lines.filter(l => !mainStats.includes(l));
 
-  // heuristic: the first 1–2 numbered lines are usually main stat block
-  const mainStats = lines.slice(0, Math.min(2, lines.length));
-  const substats = lines.slice(mainStats.length);
-
-  return {
-    lines,
-    mainStats,
-    substats,
-    meta: { orientation }
-  };
+return {
+  lines,
+  mainStats,
+  substats,
+  meta: { orientation }
+};
 }
 
 // ---------------- Auto loop ----------------

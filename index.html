@@ -1,60 +1,56 @@
 <!doctype html>
 <html>
-  <head>
-    <meta charset="utf-8" />
-    <meta
-      http-equiv="Content-Security-Policy"
-      content="default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self';"
-    />
-    <meta name="viewport" content="width=device-width,initial-scale=1" />
-    <title>Gear OCR Overlay</title>
-    <style>
-      :root { color-scheme: dark; }
-      html, body { margin:0; padding:0; height:100%; background:#0e0f12; color:#e8e8ea; font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif; }
-      header { display:flex; gap:8px; align-items:center; padding:10px 12px; background:#15161b; border-bottom:1px solid #24262d; position:sticky; top:0; z-index:3; }
-      header h1 { font-size:16px; margin:0 12px 0 0; font-weight:600; color:#fff; }
-      button { background:#2a2d37; color:#fff; border:1px solid #353845; border-radius:6px; padding:8px 12px; cursor:pointer; }
-      button:disabled { opacity:.6; cursor:not-allowed; }
-      main { display:grid; grid-template-columns:1fr 420px; gap:14px; padding:12px; min-height:calc(100% - 50px); }
-      @media (max-width: 900px) { main { grid-template-columns: 1fr; } }
-      .stage { position:relative; background:#0b0c10; border:1px solid #24262d; border-radius:8px; overflow:hidden; min-height:360px; }
-      .tools { position:absolute; left:10px; top:10px; z-index:2; display:flex; gap:8px; }
-      canvas { display:block; width:100%; height:auto; image-rendering:crisp-edges; }
-      .overlay-rect { position:absolute; border:2px solid #59a9ff; background-color:rgba(89,169,255,.15); pointer-events:none; z-index:2; }
-      aside { border:1px solid #24262d; background:#0b0c10; border-radius:8px; padding:12px; min-height:360px; }
-      h2 { font-size:15px; margin:0 0 8px 0; color:#fff; }
-      #status { font-size:12px; color:#9aa3b2; }
-      #output { white-space:pre-wrap; font:13px/1.45 ui-monospace,Consolas,Menlo,monospace; color:#d9dbea; }
-      .kv strong { color:#b7cffd; }
-      .hr { height:1px; background:#24262d; margin:10px 0; }
-      .hint { color:#93a0b2; font-size:12px; }
-    </style>
-  </head>
-  <body>
-    <header>
-      <h1>Gear OCR Overlay</h1>
-      <button id="btnCapture">Capture</button>
-      <button id="btnReset" disabled>Reset</button>
-      <div id="status" aria-live="polite"></div>
-    </header>
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'; script-src 'self';"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Gear OCR Controller</title>
+  <style>
+    :root { color-scheme: dark; }
+    html, body { margin:0; padding:0; height:100%; background:#0e0f12; color:#e8e8ea;
+      font:14px/1.4 system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;}
+    header { display:flex; flex-wrap:wrap; gap:8px; align-items:center; padding:10px 12px; background:#15161b;
+      border-bottom:1px solid #24262d; position:sticky; top:0; z-index:3; }
+    header h1 { font-size:16px; margin:0 12px 0 0; font-weight:600; color:#fff; }
+    button, select { background:#2a2d37; color:#fff; border:1px solid #353845; border-radius:6px; padding:8px 12px; cursor:pointer; }
+    button:disabled { opacity:.6; cursor:not-allowed; }
+    select { padding:6px 10px; }
+    main { display:grid; grid-template-columns: 1fr; gap:12px; padding:12px; }
+    .stage { position:relative; background:#0b0c10; border:1px solid #24262d; border-radius:8px; overflow:hidden; min-height:360px; }
+    .tools { position:absolute; left:10px; top:10px; z-index:2; display:flex; gap:8px; }
+    canvas { display:block; width:100%; height:auto; image-rendering:crisp-edges; }
+    .rect { position:absolute; border:2px solid #59a9ff; background:rgba(89,169,255,.15); pointer-events:none; z-index:3; }
+    #status { font-size:12px; color:#9aa3b2; margin-left:auto; }
+    .hint { color:#93a0b2; font-size:12px; padding:0 12px 12px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Gear OCR Controller</h1>
+    <button id="btnBind">Bind Game</button>
+    <select id="winSelect" style="display:none; max-width:360px;"></select>
+    <button id="btnUse" style="display:none;">Use</button>
+    <button id="btnCapture" disabled>Preview</button>
+    <button id="btnFrame" disabled>Frame</button>
+    <button id="btnAuto" disabled>Auto</button>
+    <button id="btnSnap" disabled>Snap</button>
+    <button id="btnOpenHUD">HUD</button>
+    <div id="status" aria-live="polite"></div>
+  </header>
 
-    <main>
-      <section class="stage">
-        <div class="tools">
-          <span class="hint">Drag to select the gear panel</span>
-        </div>
-        <div id="rect" class="overlay-rect" hidden></div>
-        <canvas id="screenCanvas" width="0" height="0" aria-label="Screenshot canvas"></canvas>
-      </section>
+  <main>
+    <section class="stage">
+      <div class="tools"><span class="hint">Bind → Preview → Frame (drag ROI) → Auto</span></div>
+      <div id="rect" class="rect" hidden></div>
+      <canvas id="preview" width="0" height="0" aria-label="Game preview"></canvas>
+    </section>
+    <div class="hint">
+      Hotkeys (work while playing): <strong>F7</strong> HUD show/hide, <strong>F8</strong> HUD edit (3s), <strong>F9</strong> Snap, <strong>F10</strong> Auto on/off.
+      ROI minimum width enforced: <strong>600 px</strong>.
+    </div>
+  </main>
 
-      <aside>
-        <h2>OCR Output</h2>
-        <div id="output">(no output yet)</div>
-        <div class="hr"></div>
-        <div class="hint">Two‑pass OCR: labels (title/type/names, zones only) + digits (numbers with whitelist).</div>
-      </aside>
-    </main>
-
-    <script src="./renderer.js"></script>
-  </body>
+  <script src="./renderer.js"></script>
+</body>
 </html>

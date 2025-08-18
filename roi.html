@@ -1,0 +1,56 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy"
+        content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self';"/>
+  <title>ROI</title>
+  <style>
+    html, body { margin:0; padding:0; background:transparent; overflow:hidden; }
+	.frame {position:absolute; inset:0;border:2px solid rgba(126,235,154,0.96);pointer-events:none;               /* default click-through */z-index:5;                         /* below the handles */}
+    .hint {
+      position:absolute; right:10px; top:10px;
+      font:12px/1.2 system-ui; color:#eaeaea;
+      background:rgba(20,24,28,0.9); border:1px solid rgba(255,255,255,0.08);
+      padding:4px 6px; border-radius:6px; display:none;
+    }
+    .edit .frame { pointer-events:auto; cursor:move; }
+    .edit .hint { display:block; }
+
+    /* Handles */
+    .handle { position:absolute; background:#7ceb9a; border:2px solid #0b0c10; border-radius:4px; display:none; z-index:10; pointer-events:auto;}
+    .corner { width:18px; height:18px; }
+    .edge   { width:18px; height:18px; }
+
+    .edit .handle { display:block; }
+
+    /* corners */
+    .tl { left:-9px;  top:-9px;   cursor:nwse-resize; }
+    .tr { right:-9px; top:-9px;   cursor:nesw-resize; }
+    .bl { left:-9px;  bottom:-9px;cursor:nesw-resize; }
+    .br { right:-9px; bottom:-9px;cursor:nwse-resize; }
+    /* edges (centred) */
+    .tm { left:50%;   top:-9px;   transform:translateX(-50%); cursor:ns-resize; }
+    .bm { left:50%;   bottom:-9px;transform:translateX(-50%); cursor:ns-resize; }
+    .lm { left:-9px;  top:50%;    transform:translateY(-50%); cursor:ew-resize; }
+    .rm { right:-9px; top:50%;    transform:translateY(-50%); cursor:ew-resize; }
+  </style>
+</head>
+<body>
+  <div id="frame" class="frame"></div>
+  <div id="hint" class="hint">Editing — drag/resize. (Esc/F8 to finish)</div>
+
+  <!-- corners -->
+  <div id="tl" class="handle corner tl"></div>
+  <div id="tr" class="handle corner tr"></div>
+  <div id="bl" class="handle corner bl"></div>
+  <div id="br" class="handle corner br"></div>
+  <!-- edges -->
+  <div id="tm" class="handle edge tm"></div>
+  <div id="bm" class="handle edge bm"></div>
+  <div id="lm" class="handle edge lm"></div>
+  <div id="rm" class="handle edge rm"></div>
+
+  <script src="./roi.js"></script>
+</body>
+</html>

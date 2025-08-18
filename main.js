@@ -132,9 +132,9 @@ async function prepDigitsCandidates(buf) {
     .toBuffer();
 
   // Candidates
-  const thrA = await sharp(base).threshold(150).toBuffer();           // normal@150
-  const thrB = await sharp(base).negate().threshold(150).toBuffer();  // inverted@150
-  const thrC = await sharp(base).threshold(150).toBuffer();           // normal@150
+  const thrA = await sharp(base).threshold(100).toBuffer();           // normal@150
+  const thrB = await sharp(base).negate().threshold(100).toBuffer();  // inverted@150
+  const thrC = await sharp(base).threshold(100).toBuffer();           // normal@150
 
   return { thrA, thrB, thrC, debugBase: base };
 }

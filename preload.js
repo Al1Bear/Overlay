@@ -2,31 +2,28 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('bridge', {
-  // controller (index.html)
-  autoBind:     () => ipcRenderer.invoke('auto-bind'),
-  listWindows:  () => ipcRenderer.invoke('list-windows'),
-  bindWindow:   (id) => ipcRenderer.invoke('bind-window', id),
-  captureBound: () => ipcRenderer.invoke('capture-bound'),
-  ocrPanel:     (u8) => ipcRenderer.invoke('ocr', u8),
+  // ROI
+  getRoi:     () => ipcRenderer.invoke('roi:get'),
+  setRoi:     (b) => ipcRenderer.invoke('roi:set', b),
+  editRoi:    (on) => ipcRenderer.invoke('roi:edit', !!on),
+  toggleBox:  () => ipcRenderer.invoke('roi:toggle-visible'),
 
-  // HUD control from controller
-  hudText: (lines, pulse = false, roiPixels = null, showROI = false) =>
-    ipcRenderer.send('hud-text', { lines, pulse, roiPixels, showROI }),
+  // Capture / Auto
+  snap:       () => ipcRenderer.invoke('snap'),
+  auto:       (on) => ipcRenderer.invoke('auto', !!on),
 
-  toggleAuto: (on) => ipcRenderer.send('auto-toggle', !!on),
-  snapNow:    () => ipcRenderer.send('snap-now'),
+  // Sidebar status
+  onUpdate:   (cb) => ipcRenderer.on('side:update', (_e, payload) => cb(payload)),
+  onStatus:   (cb) => ipcRenderer.on('side:status', (_e, s) => cb(s)),
 
-  // receive hotkey relays from main
-  onMain: (cb) => ipcRenderer.on('main-event', (_e, msg) => cb(msg)),
+  // Hotkey relays from main
+  onEditToggle: (cb) => ipcRenderer.on('side:editToggle', () => cb()),
+  onSnap:       (cb) => ipcRenderer.on('side:snap', () => cb()),
+  onAutoToggle: (cb) => ipcRenderer.on('side:autoToggle', () => cb()),
 
-  // HUD window APIs (hud.html)
-  onHudText: (cb) => ipcRenderer.on('hud-update', (_e, payload) => cb(payload)),
-  onHudEdit: (cb) => ipcRenderer.on('hud-edit', (_e, on) => cb(on)),
-  setHudClickThrough: (on) => ipcRenderer.invoke('hud-clickthrough', on),
-  hudMoveTo: (x, y) => ipcRenderer.invoke('hud-move', { x, y }),
-  getHudBounds: () => ipcRenderer.invoke('hud-bounds'),
+  // ROI overlay edit on/off
+  onRoiEdit:  (cb) => ipcRenderer.on('roi:edit', (_e, on) => cb(on)),
 
   // misc
-  saveText: (t) => ipcRenderer.invoke('save-text', String(t || '')),
-  setTitle: (t) => ipcRenderer.send('set-title', t)
+  saveText:   (t) => ipcRenderer.invoke('save-text', String(t || '')),
 });

@@ -1,4 +1,5 @@
-// preload.js
+// preload.js — stable API for HUD + ROI
+
 const { contextBridge, ipcRenderer } = require('electron');
 
 const api = {
@@ -7,20 +8,25 @@ const api = {
     set: (rect) => ipcRenderer.invoke('roi:set', rect),
     edit: () => ipcRenderer.invoke('roi:edit'),
     toggleVisible: () => ipcRenderer.invoke('roi:toggle-visible'),
-    onBounds: (cb) => ipcRenderer.on('roi:bounds', (_e, rect) => cb(rect)),
+    hello: () => ipcRenderer.send('roi:hello'),
+    onBounds: (cb) => ipcRenderer.on('roi:bounds', (_e, r) => cb(r)),
     onEditing: (cb) => ipcRenderer.on('roi:editing', (_e, on) => cb(on)),
     onVisible: (cb) => ipcRenderer.on('roi:visible', (_e, v) => cb(v)),
-    hello: () => ipcRenderer.send('roi:hello')
+  },
+  auto: {
+    toggle: () => ipcRenderer.invoke('auto:toggle'),
+    onState: (cb) => ipcRenderer.on('auto:state', (_e, on) => cb(on)),
+    onCapture: (cb) => ipcRenderer.on('auto:capture', (_e, d) => cb(d)),
   },
   snap: () => ipcRenderer.invoke('snap'),
-  auto: {
-    toggle: () => ipcRenderer.invoke('auto'),
-    onState: (cb) => ipcRenderer.on('auto:state', (_e, on) => cb(on)),
-    onCapture: (cb) => ipcRenderer.on('auto:capture', (_e, data) => cb(data))
+  hud: {
+    toggle: () => ipcRenderer.invoke('hud:toggle'),
+    resize: (h) => ipcRenderer.invoke('hud:resize', h),
+    closeOverlay: () => ipcRenderer.invoke('hud:close-overlay'),
+    onHotkeySnap: (cb) => ipcRenderer.on('hotkey:snap', cb),
   },
-  log: (msg) => ipcRenderer.send('log', msg)
+  log: (msg) => ipcRenderer.send('log', msg),
 };
 
 contextBridge.exposeInMainWorld('api', api);
-// compatibility alias if existing renderer used electronAPI
-contextBridge.exposeInMainWorld('electronAPI', api);
+contextBridge.exposeInMainWorld('electronAPI', api); // alias

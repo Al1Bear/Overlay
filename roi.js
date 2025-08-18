@@ -1,77 +1,67 @@
-// roi.js
-// Handles editing the ROI window bounds by dragging its edges/corners.
+// roi.js — moving + resizing the ROI window in Edit mode
 
-const MIN_W = 80;
-const MIN_H = 80;
-
-const hintEl = document.getElementById('hint');
-
-// Let main know we're alive and request initial bounds
-window.api.roi.hello();
-
-// Keep local cache of bounds (Electron window bounds)
+const MIN_W = 80, MIN_H = 80;
 let bounds = null;
-window.api.roi.onBounds((b) => { bounds = b; updateHint(); });
+
+window.api.roi.hello();
+window.api.roi.onBounds((b) => { bounds = b; });
 window.api.roi.onEditing((on) => {
-  hintEl.style.display = on ? 'block' : 'none';
+  document.getElementById('hint').style.display = on ? 'block' : 'none';
 });
 
-// Utilities to ask main to set new bounds
-async function setBounds(newB) {
-  bounds = await window.api.roi.set(newB);
-  updateHint();
-}
-function updateHint() {
-  if (!bounds) return;
-  hintEl.textContent = `Editing ROI ${bounds.width}×${bounds.height}`;
+// Helpers
+async function setBounds(b) { bounds = await window.api.roi.set(b); }
+function startState(e) {
+  return { mx: e.screenX, my: e.screenY, x: bounds.x, y: bounds.y, w: bounds.width, h: bounds.height };
 }
 
-// Drag logic
-let dragging = false;
-let dragDir = null;
-let start = null;
+// Move (drag inside)
+document.getElementById('drag').addEventListener('mousedown', (e) => {
+  const s = startState(e);
+  function move(ev) {
+    const dx = ev.screenX - s.mx;
+    const dy = ev.screenY - s.my;
+    setBounds({ x: s.x + dx, y: s.y + dy, width: s.w, height: s.h });
+  }
+  function up() { window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up); }
+  window.addEventListener('mousemove', move);
+  window.addEventListener('mouseup', up, { once: true });
+});
 
-function startDrag(dir, e) {
-  dragging = true;
-  dragDir = dir;
-  start = {
-    mx: e.screenX, my: e.screenY,
-    x: bounds.x, y: bounds.y, w: bounds.width, h: bounds.height
-  };
-  window.addEventListener('mousemove', onDragMove);
-  window.addEventListener('mouseup', stopDrag, { once: true });
-}
-
-function onDragMove(e) {
-  if (!dragging || !bounds) return;
-  const dx = e.screenX - start.mx;
-  const dy = e.screenY - start.my;
-
-  let x = start.x, y = start.y, w = start.w, h = start.h;
-
-  // corners
-  if (dragDir.includes('n')) { y = start.y + dy; h = start.h - dy; }
-  if (dragDir.includes('s')) { h = start.h + dy; }
-  if (dragDir.includes('w')) { x = start.x + dx; w = start.w - dx; }
-  if (dragDir.includes('e')) { w = start.w + dx; }
-
-  // clamp min size
-  if (w < MIN_W) { if (dragDir.includes('w')) x -= (MIN_W - w); w = MIN_W; }
-  if (h < MIN_H) { if (dragDir.includes('n')) y -= (MIN_H - h); h = MIN_H; }
-
-  setBounds({ x, y, width: w, height: h });
-}
-
-function stopDrag() {
-  dragging = false;
-  window.removeEventListener('mousemove', onDragMove);
-}
-
-// Bind all hit areas
+// Resize on edges/corners
 document.querySelectorAll('[data-dir]').forEach(el => {
   el.addEventListener('mousedown', (e) => {
-    // Only when editing (the main process sets click-through OFF)
-    startDrag(el.dataset.dir, e);
-    e.preventDefault();
+    const dir = el.dataset.dir;
+    const s = startState(e);
+    function move(ev) {
+      const dx = ev.screenX - s.mx;
+      const dy = ev.screenY - s.my;
+      let x = s.x, y = s.y, w = s.w, h = s.h;
+      if (dir.includes('n')) { y = s.y + dy; h = s.h - dy; }
+      if (dir.includes('s')) { h = s.h + dy; }
+      if (dir.includes('w')) { x = s.x + dx; w = s.w - dx; }
+      if (dir.includes('e')) { w = s.w + dx; }
+      if (w < MIN_W) { if (dir.includes('w')) x -= (MIN_W - w); w = MIN_W; }
+      if (h < MIN_H) { if (dir.includes('n')) y -= (MIN_H - h); h = MIN_H; }
+      setBounds({ x, y, width: w, height: h });
+    }
+    function up() { window.removeEventListener('mousemove', move); window.removeEventListener('mouseup', up); }
+    window.addEventListener('mousemove', move);
+    window.addEventListener('mouseup', up, { once: true });
   });
+});
+
+// Keyboard nudge
+window.addEventListener('keydown', (e) => {
+  if (!bounds) return;
+  const step = e.shiftKey ? 10 : 1;
+  let { x, y, width, height } = bounds;
+  if (e.key === 'ArrowLeft')  x -= step;
+  if (e.key === 'ArrowRight') x += step;
+  if (e.key === 'ArrowUp')    y -= step;
+  if (e.key === 'ArrowDown')  y += step;
+  if (['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(e.key)) {
+    e.preventDefault();
+    setBounds({ x, y, width, height });
+  }
 });

@@ -117,16 +117,10 @@ function median(a) {
 }
 
 // ---------------- SMART CAMERA (OCR) ----------------
-// rotate portrait to upright; return { buf, orientation }
+
 async function toRotatedPNG(native) {
-  const { width, height } = native.getSize();
-  let buf = native.toPNG();
-  let orientation = 'landscape';
-  if (height > width * 1.10) {
-    orientation = 'portrait';
-    buf = await sharp(buf).rotate(90).png().toBuffer();
-  }
-  return { buf, orientation };
+  const buf = native.toPNG();
+  return { buf, orientation: 'landscape' };
 }
 
 function avgColorInBox(imgNative, x0, y0, x1, y1) {
@@ -335,13 +329,32 @@ async function analyzeRoiSmart(native) {
   const { buf, orientation } = await toRotatedPNG(native);
   const oriented = nativeImage.createFromBuffer(buf);
 const { width: W, height: H } = oriented.getSize();
+// Preprocess ROI image: convert to grayscale, binarize (threshold), and upscale 2×
+const processedBuf = await sharp(buf)
+  .grayscale()            // convert to grayscale
+  .threshold(128)         // apply binary threshold at mid-level (128) for B/W image
+  .resize({ width: W * 2, height: H * 2 })
+  .toBuffer();
 // numeric values live on the right side; ignore digits to the left of this column
 const NUM_X0 = Math.floor(W * 0.50); // a touch wider to avoid over-filtering
 
-  // 2) OCR once, then work from word boxes
-  const { data } = await Tesseract.recognize(buf, 'eng', {});
+  // Run OCR with Tesseract (PSM 6 = single uniform block of text)
+  const { data } = await Tesseract.recognize(processedBuf, 'eng', { tessedit_pageseg_mode: 6 });
   const groups = groupWordsByLines(data.words);
-
+  let gearTitle = '', gearType = '';
+// Take top two OCR lines as Title and Type if they have no numeric content
+if (groups.length > 0) {
+    const firstLineText = groups[0].words.map(w => w.text).join(' ').trim();
+    if (firstLineText && !/[0-9]/.test(firstLineText)) {
+        gearTitle = firstLineText;
+    }
+}
+if (groups.length > 1) {
+    const secondLineText = groups[1].words.map(w => w.text).join(' ').trim();
+    if (secondLineText && !/[0-9]/.test(secondLineText)) {
+        gearType = secondLineText;
+    }
+}
   const lines = [];
   for (const g of groups) {
     // only consider lines that actually contain numbers
@@ -461,10 +474,11 @@ const mainStats = mains.length ? mains : lines.slice(0, Math.min(2, lines.length
 const substats  = lines.filter(l => !mainStats.includes(l));
 
 return {
-  lines,
-  mainStats,
-  substats,
-  meta: { orientation }
+    title: gearTitle,
+    type: gearType,
+    mainStats: mainStats,
+    substats: substats,
+    meta: { orientation }
 };
 }
 

@@ -5,39 +5,32 @@
   <title>ROI</title>
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'">
   <style>
-    html, body { margin:0; padding:0; background: transparent; overflow: hidden; }
-    /* The visible rectangle (drawn inside the window area) */
+    html, body { margin:0; padding:0; background:transparent; overflow:hidden; }
     .frame {
-      position: absolute;
-      inset: 0;
-      border: 2px solid #49ff47;
-      box-shadow: 0 0 0 2px rgba(0,0,0,0.25) inset;
-      pointer-events: none; /* we use window-level events */
+      position:absolute; inset:0;
+      border:2px solid #49ff47;
+      box-shadow: 0 0 0 2px rgba(0,0,0,.25) inset;
     }
-    /* resize hit areas on all edges/corners */
-    .edge { position:absolute; pointer-events:auto; }
-    .n, .s { left:0; right:0; height:8px; cursor: ns-resize; }
-    .n { top: -4px; } .s { bottom: -4px; }
-    .w, .e { top:0; bottom:0; width:8px; cursor: ew-resize; }
-    .w { left:-4px; } .e { right:-4px; }
-    .nw, .ne, .sw, .se {
-      width:14px; height:14px; background: rgba(73,255,71,0.9);
-      border-radius: 2px; cursor: nwse-resize;
-    }
-    .nw { position:absolute; left:-7px; top:-7px; }
-    .ne { position:absolute; right:-7px; top:-7px; cursor: nesw-resize; }
-    .sw { position:absolute; left:-7px; bottom:-7px; cursor: nesw-resize; }
-    .se { position:absolute; right:-7px; bottom:-7px; }
+    .drag { position:absolute; inset:6px; cursor: move; background: transparent; }
+    .edge { position:absolute; }
+    .n,.s { left:0; right:0; height:8px; cursor: ns-resize; }
+    .n{ top:-4px } .s{ bottom:-4px }
+    .w,.e { top:0; bottom:0; width:8px; cursor: ew-resize; }
+    .w{ left:-4px } .e{ right:-4px }
+    .nw,.ne,.sw,.se { position:absolute; width:14px; height:14px; background:#49ff47; border-radius:2px; }
+    .nw{ left:-7px; top:-7px; cursor:nwse-resize }
+    .ne{ right:-7px; top:-7px; cursor:nesw-resize }
+    .sw{ left:-7px; bottom:-7px; cursor:nesw-resize }
+    .se{ right:-7px; bottom:-7px; cursor:nwse-resize }
     .hint {
-      position:absolute; top:6px; right:8px; color:#49ff47; font: 12px/1.2 system-ui, sans-serif;
-      text-shadow: 0 1px 2px rgba(0,0,0,.5);
-      pointer-events: none;
+      position:absolute; right:8px; top:6px; color:#49ff47; font:12px system-ui, sans-serif;
+      text-shadow:0 1px 2px rgba(0,0,0,.5); pointer-events:none;
     }
   </style>
 </head>
 <body>
   <div class="frame"></div>
-  <!-- hit areas -->
+  <div class="drag" id="drag"></div>
   <div class="edge n" data-dir="n"></div>
   <div class="edge s" data-dir="s"></div>
   <div class="edge w" data-dir="w"></div>
@@ -46,8 +39,7 @@
   <div class="ne" data-dir="ne"></div>
   <div class="sw" data-dir="sw"></div>
   <div class="se" data-dir="se"></div>
-  <div class="hint" id="hint">Editing ROI</div>
-
+  <div class="hint" id="hint">Editing ROI — drag to move, edges to resize</div>
   <script src="./roi.js"></script>
 </body>
 </html>

@@ -120,28 +120,31 @@ function mergeTwoPass(labelText, digitsText) {
   ].join('\n');
 }
 /* === ADDED: parsing helpers for labels + digits === */
+const KNOWN_SLOTS = [
+  'Gloves','Helm','Helmet','Boots','Armor','Chest','Ring','Necklace','Belt',
+  'Bracers','Shield','Weapon','Sword','Bow','Staff','Dagger'
+];
+
 function parseGearTexts(labelText, digitsText) {
   // Labels come as: [title] \n [type?] \n [left-column stat names...]
-  const L = String(labelText || '')
-    .split(/\n+/).map(s => s.trim()).filter(Boolean);
+  const L = String(labelText || '').split(/\n+/).map(s => s.trim()).filter(Boolean);
 
   const title = L[0] || '';
-  // Treat line 2 as the item type if it looks like a single word “Gloves/Helm/Boots/...”
-  const looksLikeType = (s) => /^[A-Z][A-Za-z]+s?$/.test(s || '') && (s || '').length <= 12;
+  const looksLikeType = (s) =>
+    KNOWN_SLOTS.includes(s) || (/^[A-Z][A-Za-z]+s?$/.test(s || '') && (s || '').length <= 12);
   const type = looksLikeType(L[1]) ? L[1] : '';
 
   const nameStart = type ? 2 : 1;
-  const rawNames = L.slice(nameStart);
 
-  // Normalise stat names and common variants/typos
+  // Normalise common variants
   const normalise = (s) => {
     s = (s || '').replace(/[:·•]+/g, ' ').replace(/\s+/g, ' ').trim();
-    s = s.replace(/\b(ATK|HP|DEF)\s*%\b/g, '$1%'); // ATK % -> ATK%
-    if (/^atk%?$/i.test(s)) return s.toUpperCase();
+    s = s.replace(/\b(ATK|HP|DEF)\s*%\b/g, '$1%');  // ATK % -> ATK%
+    if (/^atk%?$/i.test(s)) return 'ATK%';
     if (/^atk$/i.test(s)) return 'ATK';
-    if (/^def%?$/i.test(s)) return s.toUpperCase();
+    if (/^def%?$/i.test(s)) return 'DEF%';
     if (/^def(ense)?$/i.test(s)) return 'Defense';
-    if (/^hp%?$/i.test(s)) return s.toUpperCase();
+    if (/^hp%?$/i.test(s)) return 'HP%';
     if (/crit\s*rate/i.test(s)) return 'Crit Rate';
     if (/crit\s*(dmg|damage)/i.test(s)) return 'Crit Damage';
     if (/accuracy/i.test(s)) return 'Accuracy';
@@ -149,9 +152,9 @@ function parseGearTexts(labelText, digitsText) {
     return s;
   };
 
-  const statNames = rawNames.map(normalise).filter(Boolean);
+  const statNames = L.slice(nameStart).map(normalise).filter(Boolean);
 
-  // Digits: keep tokens like +12, +12.5%, 8.0%, -3, 10/10
+  // Digits: +12, +12.5%, 16.9%, -3, etc.
   const values = String(digitsText || '')
     .replace(/[^\d.+%\-\/\n]/g, ' ')
     .split(/\s+/).filter(Boolean)
@@ -161,15 +164,12 @@ function parseGearTexts(labelText, digitsText) {
 
   const subs = [];
   const n = Math.min(Math.max(0, statNames.length - 1), Math.max(0, values.length - 1));
-  for (let i = 0; i < n; i++) {
-    subs.push({ label: statNames[i + 1], value: values[i + 1] || '' });
-  }
+  for (let i = 0; i < n; i++) subs.push({ label: statNames[i + 1], value: values[i + 1] || '' });
 
   return { title, type, main, subs, raw: { labels: labelText, digits: digitsText } };
 }
 
 function renderParsed(p, labelText, digitsText) {
-  // If parsing failed, show the original two-pass text
   if (!p || !p.main || !p.main.label || !p.main.value) {
     return mergeTwoPass(labelText, digitsText);
   }
@@ -181,10 +181,12 @@ function renderParsed(p, labelText, digitsText) {
     out.push('Subs:');
     for (const s of p.subs) out.push(` - ${s.label} ${s.value}`);
   }
-  // Keep raw OCR for debugging under the parsed block
+  // Keep raw OCR under the parsed block for debugging
   out.push('\n--- RAW ---\n' + mergeTwoPass(labelText, digitsText));
   return out.join('\n');
 }
+/* === /ADDED === */
+
 
 // ---------- Pointer event handlers ----------
 function onPtrDown(e) {

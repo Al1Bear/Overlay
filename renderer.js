@@ -13,6 +13,22 @@ const dot = $('#dot');
 const out = $('#out');
 const roiInfo = $('#roi-info');
 
+// --- smart-cam formatters (compact, fits at ≥600px) ---
+function fmtLine(l) {
+  if (!l) return '';
+  const base = (l.base ?? '?') + (l.unit || '');
+  const up   = l.upgrade ? ` (+${l.upgrade}${l.unit || ''})` : '';
+  const lbl  = l.label && l.label.length ? l.label : '(?)';
+  return `${lbl}: ${base}${up}`;
+}
+function fmtRecord(r) {
+  if (!r || !Array.isArray(r.mainStats)) return '';
+  const main = r.mainStats.map(fmtLine);
+  const subs = r.substats.map(fmtLine);
+  return [...main, ...subs].join(' | ');
+}
+
+
 let expanded = false;
 
 function log(line) {
@@ -65,13 +81,20 @@ btnAuto.addEventListener('click', async () => {
   btnAuto.textContent = on ? 'Auto (On)' : 'Auto (Off)';
   setStatus(on ? 'Auto capture armed (debounced).' : 'Auto disabled.');
 });
-
+function fmtSmartLine(r){
+  if (!r || !Array.isArray(r.mainStats)) return '';
+  const fmt = (l) => `${l.label}: ${l.base}${l.unit||''}${l.upgrade ? ` (+${l.upgrade}${l.unit||''})` : ''}`;
+  return [...r.mainStats.map(fmt), ...r.substats.map(fmt)].join(' | ');
+}
 async function doSnap() {
   setStatus('Snapping…'); dot.classList.add('wait');
   const res = await window.api.snap();
   dot.classList.remove('wait');
   setStatus('Snap ✓');
   log(`[SNAP] ${res.pngBase64.length} b64  ROI=${JSON.stringify(res.roi)}`);
+if (res.record) { log('[smartcam] ' + res.record.mainStats.concat(res.record.substats)
+  .map(l => `${l.label}: ${l.base}${l.unit || ''}${l.upgrade ? ` (+${l.upgrade}${l.unit || ''})` : ''}`)
+  .join(' | ')); }
 }
 btnSnap.addEventListener('click', doSnap);
 
@@ -85,6 +108,9 @@ btnBox.addEventListener('click', async () => {
 window.api.auto.onCapture((d) => {
   setStatus('Change detected ✓');
   log(`[AUTO] ${d.pngBase64.length} b64  ROI=${JSON.stringify(d.roi)}`);
+if (d.record) { log('[auto/smartcam] ' + d.record.mainStats.concat(d.record.substats)
+  .map(l => `${l.label}: ${l.base}${l.unit || ''}${l.upgrade ? ` (+${l.upgrade}${l.unit || ''})` : ''}`)
+  .join(' | ')); }
 });
 window.api.auto.onState((on) => { setDot(on); btnAuto.textContent = on ? 'Auto (On)' : 'Auto (Off)'; });
 window.api.roi.onBounds(refreshRoi);

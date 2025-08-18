@@ -5,27 +5,67 @@
   <title>Gear OCR Overlay</title>
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'">
   <style>
-    html,body { margin:0; padding:12px; font-family: system-ui, Segoe UI, Roboto, sans-serif; }
-    .bar { display: flex; gap: 8px; align-items: center; }
-    button { padding: 8px 10px; border: 1px solid #888; background: #f4f4f4; border-radius: 6px; cursor: pointer; }
-    button:hover { background: #eee; }
-    #out { width: 100%; height: 280px; margin-top: 10px; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
-    #status { color:#444; margin-left: 8px; font-size: 12px; }
-    #roi-info { margin-left: auto; font-size: 12px; color: #555; }
+	/* NEW: layout hygiene to avoid any outer scrollbars */
+*, *::before, *::after { box-sizing: border-box; }
+html, body { margin: 0; height: 100%; overflow: hidden; background: transparent; }
+    :root { --bg:#101114D0; --fg:#e9e9ea; --muted:#9aa0a6; --accent:#4ad36f; --line:#2a2e33; }
+    html,body { margin:0; background:transparent; color:var(--fg); font-family:system-ui,Segoe UI,Roboto,Inter,sans-serif; }
+    .hud { width:100%; height:100%; backdrop-filter: blur(6px) saturate(110%); background:var(--bg); border:1px solid #0008; border-radius:10px; overflow:hidden; }
+    .title { display:flex; align-items:center; gap:10px; padding:8px 10px; -webkit-app-region: drag; }
+    .title .name { font-weight:600; font-size:12px; letter-spacing:.2px; color:#dfe3e7; }
+    .spacer { flex:1; }
+    .btn, button { -webkit-app-region: no-drag; border:1px solid var(--line); background:#191b1f; color:var(--fg); border-radius:6px; padding:5px 10px; cursor:pointer; font-size:12px; }
+    .btn:hover { background:#1d2025; }
+    .icon { -webkit-app-region: no-drag; width:24px; height:24px; display:grid; place-items:center; border-radius:6px; border:1px solid var(--line); background:#191b1f; cursor:pointer; }
+    .icon:hover { background:#1d2025; }
+    .dot { width:8px;height:8px;border-radius:50%;background:#666; display:inline-block; margin-left:6px; }
+    .dot.on { background:var(--accent); }
+    .dot.wait { background:#f0b429; }
+
+    .bar { display:flex; gap:8px; align-items:center; padding:0 10px 10px; }
+    #roi-info { color:#8ea0a8; font-size:12px; margin-left:auto; }
+
+/* REPLACE the previous #out block */
+#out {
+  width: calc(100% - 20px);
+  margin: 0 10px 10px;
+  height: 120px;                 /* fixed, we’ll size the window to match */
+  max-height: 40vh;
+  background: #0e0f12;
+  color: #cfd3d8;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  font: 12px/1.4 ui-monospace,Consolas,Menlo,monospace;
+  padding: 6px;
+  display: none;                 /* hidden when collapsed */
+  overflow-y: auto;              /* log scrolls internally */
+  overflow-x: hidden;            /* no horizontal scrollbars */
+  resize: none;                  /* no resize grabber */
+}
+    .expanded #out { display:block; }
   </style>
 </head>
 <body>
-  <div class="bar">
-    <button id="btn-edit">Edit ROI</button>
-    <button id="btn-auto">Auto</button>
-    <button id="btn-snap">Snap</button>
-    <button id="btn-box">Box</button>
-    <span id="status">Loading…</span>
-    <span id="roi-info"></span>
+  <div class="hud" id="hud">
+    <div class="title">
+      <div class="name">Gear OCR Overlay</div>
+      <div class="spacer"></div>
+      <div id="btn-collapse" class="icon" title="Expand/Collapse">▾</div>
+      <div id="btn-close" class="icon" title="Hide overlay (and box)">✕</div>
+    </div>
+
+    <div class="bar">
+      <button class="btn" id="btn-edit">Edit ROI</button>
+      <button class="btn" id="btn-auto">Auto</button>
+      <button class="btn" id="btn-snap">Snap</button>
+      <button class="btn" id="btn-box">Box</button>
+      <span id="status" style="margin-left:8px;color:#bfc6cc;font-size:12px;">Ready</span>
+      <span class="dot" id="dot"></span>
+      <span id="roi-info"></span>
+    </div>
+
+    <textarea id="out" readonly placeholder="Events …"></textarea>
   </div>
-
-  <textarea id="out" readonly placeholder="Logs…"></textarea>
-
   <script src="./renderer.js"></script>
 </body>
 </html>
